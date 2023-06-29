@@ -5,8 +5,6 @@
 #ifndef TWW_BB_TWWBB_H
 #define TWW_BB_TWWBB_H
 
-#define QUEUE_LIMIT UINT16_MAX
-
 #include <iostream>
 #include "graph.h"
 #include <map>
@@ -141,8 +139,8 @@ namespace tww {
 
     struct BbParameters {
         explicit BbParameters(Graph& g, node_t sat_depth, bool verbose) :
-        g(g), g_cache(0), cache(7000000000 / (sizeof(node_t) * g.num_nodes() + 2 * sizeof(size_t) + sizeof(node_t))),
-        max_degrees(g.num_nodes()), red_counts(g.num_nodes()), verbose(verbose), queues(g.num_nodes(), nullptr),
+        g(g), g_cache(0), cache((7000000000 / (sizeof(node_t) * g.num_nodes() + 2 * sizeof(size_t) + sizeof(node_t))) * 2/3),
+        max_degrees(g.num_nodes()), red_counts(g.num_nodes()), verbose(verbose), queues(g.num_nodes()),
         previous_contractions(g.num_nodes()), c_partitions(g.num_nodes(), vector<node_t>(g.num_nodes())), c_old_pat(g.num_nodes(), vector<node_t>(g.num_nodes())),
         labeling(g.num_nodes()), orbits(g.num_nodes()), queue_pointers(g.num_nodes()), best_results(g.num_nodes()),
         current_degree(g.num_nodes()), gcs(g.num_nodes()),
@@ -165,16 +163,6 @@ namespace tww {
 
             lookahead_refs.resize(g.num_nodes());
             contractions_edges.resize(g.num_nodes());
-            if (g.num_nodes() > QUEUE_LIMIT) {
-                default_queue = make_shared<vector<QueueEntry>>();
-                default_queue->reserve((g.num_nodes() * (g.num_nodes() - 1))/ 2);
-
-                for(auto i=0; i < queues.size(); ++i)
-                    queues[i] = default_queue;
-            } else {
-                for(auto i=0; i < queues.size(); ++i)
-                    queues[i] = make_shared<vector<QueueEntry>>();
-            }
             for(node_t n2=0; n2 < g.num_nodes(); n2++) {
                 lookahead_count.emplace_back(n2);
                 for(node_t n=0; n < n2; n++) {
@@ -182,20 +170,12 @@ namespace tww {
                     reds.reset(n);
                     reds.reset(n2);
                     lookahead_count[n2][n] = reds.count();
-                    if (g.num_nodes() > QUEUE_LIMIT)
-                        default_queue->emplace_back(lookahead_count[n2][n], lookahead_count[n2][n], n, n2, dynamic_bitset<>(reds), dynamic_bitset<>(reds));
-
                     for(auto cn=reds.find_first(); cn != reds.npos; cn = reds.find_next(cn)) {
                         lookahead_refs[cn].emplace_back(n2, n);
                     }
                     contractions_edges[n2].emplace_back(std::move(reds));
                 }
             }
-
-            if (g.num_nodes() > QUEUE_LIMIT)
-                sort(default_queue->begin(), default_queue->end(), [](const QueueEntry& q1, const QueueEntry& q2) {
-                    return q1.reds_count < q2.reds_count;
-                });
 
             if (sat_depth > 0) {
                 encoding = make_unique<SatEncoding>(g);
@@ -219,7 +199,7 @@ namespace tww {
         unique_ptr<SatEncoding> encoding;
         MemoryAwareCache<string> g_cache;
         vector<node_t> max_degrees;
-        vector<std::shared_ptr<vector<QueueEntry>>> queues;
+        vector<vector<QueueEntry>> queues;
         vector<vector<pair<node_t, int>>> previous_contractions;
         vector<vector<node_t>> c_partitions;
         vector<vector<node_t>> c_old_pat;
@@ -233,7 +213,6 @@ namespace tww {
         vector<node_t> deg_changes;
         vector<vector<node_t>> partitions;
         vector<pair<node_t, node_t>> best_result;
-        std::shared_ptr<vector<QueueEntry>> default_queue = nullptr;
     };
 
     struct Stats {
@@ -313,8 +292,8 @@ namespace tww {
 
         while(true) {
             // "Return"
-            if (ps.queue_pointers[depth] >= ps.queues[depth]->size() && initialized) {
-                stats.queue -= ps.queues[depth]->size();
+            if (ps.queue_pointers[depth] >= ps.queues[depth].size() && initialized) {
+                stats.queue -= ps.queues[depth].size();
                 if (depth == 0)
                     break;
 
@@ -324,22 +303,18 @@ namespace tww {
                     ps.gcs[depth] = "";
                 }
                 --depth;
-                assert(ps.queue_pointers[depth] < ps.queues[depth]->size());
+                assert(ps.queue_pointers[depth] < ps.queues[depth].size());
 
-                auto &ce = ps.queues[depth]->at(ps.queue_pointers[depth]);
-                assert(ps.g.is_deleted(ce.n));
-
+                auto& ce = ps.queues[depth][ps.queue_pointers[depth]];
                 // Undo contraction
-
+                // TODO: Is red, new red better as normal containers?
                 for (auto cn = ce.reds.find_first(); cn != ce.reds.npos; cn = ce.reds.find_next(cn)) {
-                    assert(!ps.g.is_deleted(cn));
-                    assert(ps.g.red_adjacency[ce.n2].test(cn));
                     ps.g.red_adjacency[ce.n2].reset(cn);
                     ps.g.red_adjacency[cn].reset(ce.n2);
                 }
 
                 for (auto &cp: ps.lookahead_refs[ce.n]) {
-                    assert(cp.first != ce.n && cp.second != ce.n);
+                    assert(cp.first !=ce. n && cp.second != ce.n);
                     ps.lookahead_count[cp.first][cp.second]++;
                 }
                 ps.g.restore(ce.n);
@@ -354,9 +329,9 @@ namespace tww {
                         node_bools[ps.trace[i]] = true;
                     }
 
-                    for (node_t cn = 0; cn < ps.g.num_nodes() - 1; ++cn) {
+                    for(node_t cn=0; cn < ps.g.num_nodes()-1; ++cn) {
                         if (!node_bools[cn]) {
-                            ps.best_result.emplace_back(cn, ps.g.num_nodes() - 1);
+                            ps.best_result.emplace_back(cn, ps.g.num_nodes()-1);
                         }
                     }
 
@@ -373,7 +348,7 @@ namespace tww {
                     }
                 }
                 if (depth > 0)
-                    ps.best_results[depth - 1] = min(overall_result, ps.best_results[depth - 1]);
+                    ps.best_results[depth-1] = min(overall_result, ps.best_results[depth-1]);
                 ++ps.queue_pointers[depth];
             } else {
                 bool generate = true;
@@ -382,114 +357,26 @@ namespace tww {
 
                 // Perform contraction
                 if (depth > 0 || initialized) {
-                    auto *ce = &(ps.queues[depth]->at(ps.queue_pointers[depth]));
-                    if (ce->max_degree >= ub && ps.g.num_nodes() <= QUEUE_LIMIT) {
+                    auto &ce = ps.queues[depth][ps.queue_pointers[depth]];
+
+                    if (ce.max_degree >= ub) {
                         ++ps.queue_pointers[depth];
                         ++stats.exceeded;
                         continue;
                     }
 
-                    if (ps.g.num_nodes() > QUEUE_LIMIT) {
-                        bool increment = false;
-                        while (ps.queue_pointers[depth] < ps.queues[depth]->size()) {
-                            if (increment) {
-                                ++ps.queue_pointers[depth];
-                                if (ps.queue_pointers[depth] == ps.queues[depth]->size()) {
-                                    break;
-                                }
-                                ce = &(ps.queues[depth]->at(ps.queue_pointers[depth]));
-                            }
-                            increment = true;
-
-                            if (ps.g.is_deleted(ce->n) || ps.g.is_deleted(ce->n2))
-                                continue;
-
-                            if (orbits_filled && ps.orbits[ce->n] != ce->n && ps.orbits[ce->n2] != ce->n2) {
-                                ++stats.depths[depth];
-                                stats.orbits++;
-                                continue;
-                            }
-
-//                            // First check if the contraction would exceed the bound
-//                            if (ps.lookahead_count[n2][n] >= ub) {
-//                                min_degrees[n] = min(min_degrees[n], ps.lookahead_count[n2][n]);
-//                                ++stats.exceeded;
-//                                continue;
-//                            }
-
-                            ce->reds.reset();
-                            ce->reds |= ps.g.adjacency[ce->n];
-                            ce->reds ^= ps.g.adjacency[ce->n2];
-                            ce->reds |= ps.g.red_adjacency[ce->n];
-                            ce->reds -= ps.g.red_adjacency[ce->n2];
-
-                            ce->reds.reset(ce->n);
-                            ce->reds.reset(ce->n2);
-
-                            int deg_change = ce->reds.count();
-                            node_t red_count = deg_change;
-                            if (ps.g.red_adjacency[ce->n].test(ce->n2))
-                                deg_change -= 1;
-
-                            if (deg_change + ps.red_counts[depth][ce->n2] >= ub) {
-                                min_degrees[ce->n] = min(min_degrees[ce->n],
-                                                         static_cast<node_t>(deg_change +
-                                                                             ps.red_counts[depth][ce->n2]));
-                                ++stats.exceeded;
-                                continue;
-                            }
-
-                            // Check if any other node's degree exceeds the upper bound
-                            assert(depth <= ps.current_degree.size());
-                            ce->max_degree = initialized && depth > 0 ? ps.current_degree[depth - 1] : 0;
-                            if (deg_change + ps.red_counts[depth][ce->n2] > ce->max_degree)
-                                ce->max_degree = deg_change + ps.red_counts[depth][ce->n2];
-
-                            ce->new_reds = ce->reds;
-                            ce->new_reds -= ps.g.red_adjacency[ce->n];
-                            ce->reds_count = ce->new_reds.count();
-
-                            bool exceeded = false;
-                            for (auto cn = ce->new_reds.find_first();
-                                 cn != ce->new_reds.npos; cn = ce->new_reds.find_next(cn)) {
-                                assert(!ps.g.is_deleted(cn));
-
-                                if (ps.red_counts[depth][cn] + 1 >= ub) {
-                                    exceeded = true;
-                                    ++stats.exceeded;
-                                    break;
-                                }
-                                if (ps.red_counts[depth][cn] + 1 > ce->max_degree) {
-                                    ce->max_degree = ps.red_counts[depth][cn] + 1;
-                                }
-                            }
-
-                            if (exceeded) {
-                                ++stats.depths[depth];
-                                continue;
-                            }
-
-                            break;
-                        }
-
-                        if (ps.queue_pointers[depth] >= ps.queues[depth]->size()) {
-                            assert(ps.queue_pointers[depth] - 1 < ps.queues[depth]->size());
-                            continue;
-                        }
-                    }
-
                     // Adapt partitions
-                    for (node_t cn = 0; cn < ps.partitions[depth + 1].size(); cn++) {
-                        if (ps.partitions[depth][cn] == ce->n) {
-                            ps.partitions[depth + 1][cn] = ce->n2;
+                    for (node_t cn = 0; cn < ps.partitions[depth+1].size(); cn++) {
+                        if (ps.partitions[depth][cn] == ce.n) {
+                            ps.partitions[depth+1][cn] = ce.n2;
                         } else {
-                            ps.partitions[depth + 1][cn] = ps.partitions[depth][cn];
+                            ps.partitions[depth+1][cn] = ps.partitions[depth][cn];
                         }
                     }
 
                     {
                         node_t c_cb = 0;
-                        if (ps.cache.get(ps.partitions[depth + 1], c_cb)) {
+                        if (ps.cache.get(ps.partitions[depth+1], c_cb)) {
                             ps.best_results[depth] = min(ps.best_results[depth], c_cb);
                             ++stats.cache_filtered;
                             ++ps.queue_pointers[depth];
@@ -503,63 +390,63 @@ namespace tww {
                         stats.print(ps, true);
 
                     copy(ps.red_counts[depth].begin(), ps.red_counts[depth].end(),
-                         ps.red_counts[depth + 1].begin());
+                         ps.red_counts[depth+1].begin());
 
                     ps.current_degree[depth] =
-                            depth > 0 ? max(ps.current_degree[depth - 1], ce->max_degree) : ce->max_degree;
+                            depth > 0 ? max(ps.current_degree[depth - 1], ce.max_degree) : ce.max_degree;
 
                     // Contract
-                    ps.g.remove(ce->n);
-                    for (auto &cp: ps.lookahead_refs[ce->n]) {
-                        assert(cp.first != ce->n && cp.second != ce->n);
+                    ps.g.remove(ce.n);
+                    for (auto &cp: ps.lookahead_refs[ce.n]) {
+                        assert(cp.first != ce.n && cp.second != ce.n);
                         ps.lookahead_count[cp.first][cp.second]--;
                     }
 
-                    ps.trace[depth] = ce->n;
+                    ps.trace[depth] = ce.n;
 
                     // The change in degree, without taking into account that the degree may decrease!
                     ps.deg_changes[depth] = 0;
 
                     // Contract
-                    ps.reduced[depth] = ps.g.red_adjacency[ce->n] & ps.g.red_adjacency[ce->n2];
-                    ps.contractions[depth] = pair<node_t, node_t>(ce->n, ce->n2);
+                    ps.reduced[depth] = ps.g.red_adjacency[ce.n] & ps.g.red_adjacency[ce.n2];
+                    ps.contractions[depth] = pair<node_t, node_t>(ce.n, ce.n2);
 
-                    for (auto cn = ce->reds.find_first(); cn != ce->reds.npos; cn = ce->reds.find_next(cn)) {
-                        ps.g.red_adjacency[ce->n2].set(cn);
-                        ps.g.red_adjacency[cn].set(ce->n2);
+                    for (auto cn = ce.reds.find_first(); cn != ce.reds.npos; cn = ce.reds.find_next(cn)) {
+                        ps.g.red_adjacency[ce.n2].set(cn);
+                        ps.g.red_adjacency[cn].set(ce.n2);
                         ps.deg_changes[depth]++;
-                        if (ce->new_reds.test(cn)) {
-                            ++ps.red_counts[depth + 1][cn];
+                        if (ce.new_reds.test(cn)) {
+                            ++ps.red_counts[depth+1][cn];
                         }
                     }
-                    ps.red_counts[depth + 1][ce->n2] += ps.deg_changes[depth];
+                    ps.red_counts[depth+1][ce.n2] += ps.deg_changes[depth];
 
-                    assert(!ps.g.red_adjacency[ce->n].test(ce->n));
-                    assert(!ps.g.red_adjacency[ce->n2].test(ce->n2));
+                    assert(!ps.g.red_adjacency[ce.n].test(ce.n));
+                    assert(!ps.g.red_adjacency[ce.n2].test(ce.n2));
 
                     // Check for which nodes the red degree actually decreased
-                    if (ps.g.red_adjacency[ce->n].test(ce->n2)) {
-                        ps.reduced[depth].set(ce->n2);
+                    if (ps.g.red_adjacency[ce.n].test(ce.n2)) {
+                        ps.reduced[depth].set(ce.n2);
                     }
 
                     for (auto cn = ps.reduced[depth].find_first();
                          cn != ps.reduced[depth].npos; cn = ps.reduced[depth].find_next(cn)) {
-                        assert(ps.red_counts[depth + 1][cn] > 0);
-                        ps.red_counts[depth + 1][cn]--;
+                        assert(ps.red_counts[depth+1][cn] > 0);
+                        ps.red_counts[depth+1][cn]--;
                     }
 
                     // Reordering check for cache
                     // Caching to avoid recalculating known results
                     if (depth > 0) {
                         node_t min_idx = 0;
-                        node_t contr_count = ps.red_counts[depth + 1][ce->n2];
+                        node_t contr_count = ps.red_counts[depth+1][ce.n2];
                         c_reds.reset();
-                        c_reds |= ce->new_reds;
+                        c_reds |= ce.new_reds;
 
                         for (node_t cd = depth; cd > 0; cd--) {
                             auto c_c = ps.contractions[cd - 1].first;
-                            bool c_was_red = ps.contractions_edges[ce->n2][ce->n].test(c_c);
-                            bool c_reduced = ps.reduced[cd - 1].test(ce->n) || ps.reduced[cd - 1].test(ce->n2);
+                            bool c_was_red = ps.contractions_edges[ce.n2][ce.n].test(c_c);
+                            bool c_reduced = ps.reduced[cd - 1].test(ce.n) || ps.reduced[cd - 1].test(ce.n2);
 
                             // Check if contraction n and n2 would exceed the upper bound
                             if (c_reduced || c_was_red) {
@@ -574,7 +461,7 @@ namespace tww {
                             if (c_was_red && !c_reduced) {
                                 for (auto cn = c_reds.find_first(); cn != c_reds.npos; cn = c_reds.find_next(cn)) {
                                     if (ps.red_counts[cd][cn] == ps.current_degree[depth] &&
-                                        ps.red_counts[cd + 1][cn] < ps.current_degree[depth]) {
+                                        ps.red_counts[cd+1][cn] < ps.current_degree[depth]) {
                                         min_idx = cd;
                                         break;
                                     }
@@ -592,15 +479,15 @@ namespace tww {
 //                                copy(ps.partitions[cd+1].begin(), ps.partitions[cd+1].end(), ps.c_old_pat[depth+1].begin());
 
                                 for (node_t i = 0; i < ps.g.num_nodes(); i++) {
-                                    if (ps.c_old_pat[depth + 1][i] == ps.contractions[depth].first) {
-                                        ps.c_old_pat[depth + 1][i] = ps.contractions[depth].second;
+                                    if (ps.c_old_pat[depth+1][i] == ps.contractions[depth].first) {
+                                        ps.c_old_pat[depth+1][i] = ps.contractions[depth].second;
                                     } else {
-                                        ps.c_old_pat[depth + 1][i] = ps.partitions[cd + 1][i];
+                                        ps.c_old_pat[depth+1][i] = ps.partitions[cd+1][i];
                                     }
                                 }
 
                                 node_t cache_r;
-                                if (ps.cache.get(ps.c_old_pat[depth + 1], cache_r)) {
+                                if (ps.cache.get(ps.c_old_pat[depth+1], cache_r)) {
                                     if (max(ps.current_degree[depth], cache_r) >= ub) {
                                         ++stats.order_filtered;
                                         generate = false;
@@ -633,26 +520,13 @@ namespace tww {
                             ps.best_results[depth] = ub;
                         }
                     }
-
                     ++depth;
-                    if (ps.g.num_nodes() <= QUEUE_LIMIT)
-                        ps.queues[depth]->clear();
+                    ps.queues[depth].clear();
                     ps.queue_pointers[depth] = 0;
                 }
 
                 // Create queue of next contractions
-                if (!initialized && QUEUE_LIMIT < ps.g.num_nodes()) {
-                    if (depth == 0) {
-                        orbits_filled = true;
-                        ps.g.get_orbits(ps.orbits);
-                    }
-                    initialized = true;
-                }
-                if (!generate && QUEUE_LIMIT < ps.g.num_nodes()) {
-                    ps.queue_pointers[depth] = ps.queues[depth]->size();
-                } else if (generate && QUEUE_LIMIT < ps.g.num_nodes()) {
-                    stats.queue += ps.queues[depth]->size();
-                } else if (generate && QUEUE_LIMIT >= ps.g.num_nodes()) {
+                if (generate) {
                     if (depth == 0 && !initialized) {
                         orbits_filled = true;
                         ps.g.get_orbits(ps.orbits);
@@ -704,8 +578,7 @@ namespace tww {
 
                                     assert(ps.red_counts[depth][n2] < ub);
                                     if (deg_change + ps.red_counts[depth][n2] >= ub) {
-                                        min_degrees[n] = min(min_degrees[n], static_cast<node_t>(deg_change +
-                                                                                                 ps.red_counts[depth][n2]));
+                                        min_degrees[n] = min(min_degrees[n], static_cast<node_t>(deg_change + ps.red_counts[depth][n2]));
                                         ++stats.exceeded;
                                         continue;
                                     }
@@ -733,9 +606,9 @@ namespace tww {
                                     }
 
                                     // Check if any other node's degree exceeds the upper bound
-                                    node_t max_degree = initialized ? ps.current_degree[depth - 1] : 0;
+                                    node_t max_degree = initialized ? ps.current_degree[depth-1] : 0;
                                     if (deg_change + ps.red_counts[depth][n2] > max_degree)
-                                        max_degree = max_degree, deg_change + ps.red_counts[depth][n2];
+                                        max_degree = deg_change + ps.red_counts[depth][n2];
 
                                     auto new_reds = reds - ps.g.red_adjacency[n];
 
@@ -750,8 +623,7 @@ namespace tww {
 
                                         if (ps.red_counts[depth][cn] + 1 >= ub) {
                                             exceeded = true;
-                                            min_degrees[n] = min(min_degrees[n],
-                                                                 static_cast<node_t>(ps.red_counts[depth][cn] + 1));
+                                            min_degrees[n] = min(min_degrees[n], static_cast<node_t>(ps.red_counts[depth][cn] + 1));
                                             ++stats.exceeded;
                                             break;
                                         }
@@ -768,10 +640,10 @@ namespace tww {
                                     }
                                     min_degrees[n] = min(min_degrees[n], max_degree);
                                     if (twin)
-                                        ps.queues[depth]->clear();
+                                        ps.queues[depth].clear();
 
-                                    ps.queues[depth]->emplace_back(new_reds.count(), max_degree, n, n2, reds,
-                                                                   std::move(new_reds));
+                                    ps.queues[depth].emplace_back(new_reds.count(), max_degree, n, n2, reds,
+                                                                  std::move(new_reds));
                                 }
                             }
 
@@ -781,19 +653,19 @@ namespace tww {
                             }
                         }
                     }
-                    assert(!twin || ps.queues[depth]->size() == 1);
-                    if (!twin) {
+                    assert(!twin || ps.queues[depth].size() == 1);
+                    if (! twin) {
                         sort(min_degrees.begin(), min_degrees.end());
-                        for (auto i = 0; i < min_degrees.size() && min_degrees[i] != INVALID_NODE; i++) {
+                        for(auto i=0; i < min_degrees.size() && min_degrees[i] != INVALID_NODE; i++) {
                             if (min_degrees[i] - i >= ub) {
                                 ++stats.lb_future;
-                                ps.queues[depth]->clear();
+                                ps.queues[depth].clear();
                                 break;
                             }
                         }
                     }
-                    stats.queue += ps.queues[depth]->size();
-                    sort(ps.queues[depth]->begin(), ps.queues[depth]->end());
+                    stats.queue += ps.queues[depth].size();
+                    sort(ps.queues[depth].begin(), ps.queues[depth].end());
                     initialized = true;
                 }
             }
