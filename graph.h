@@ -1,7 +1,3 @@
-//
-// Created by asc on 09.11.22.
-//
-
 #ifndef TWW_BB_GRAPH_H
 #define TWW_BB_GRAPH_H
 #include <boost/dynamic_bitset.hpp>
@@ -28,10 +24,14 @@ namespace tww {
     public:
         std::vector<dynamic_bitset<>> adjacency;
         std::vector<dynamic_bitset<>> red_adjacency;
+        dynamic_bitset<> available;
+        node_t available_num;
 
-        explicit Graph(node_t nodes) : _deleted(nodes) {
+        explicit Graph(node_t nodes) : _deleted(nodes), available(nodes) {
             adjacency = std::vector<dynamic_bitset<>>(nodes, dynamic_bitset<>(nodes));
             red_adjacency = std::vector<dynamic_bitset<>>(nodes, dynamic_bitset<>(nodes));
+            available.flip();
+            available_num = nodes;
         }
         bool is_deleted(node_t n) const {
             return _deleted[n];
@@ -52,6 +52,8 @@ namespace tww {
 
         void remove(node_t n) {
             _deleted[n] = true;
+            available[n] = false;
+            --available_num;
             for (auto cn=adjacency[n].find_first(); cn != adjacency[n].npos; cn = adjacency[n].find_next(cn)) {
                 adjacency[cn].reset(n);
             }
@@ -62,6 +64,8 @@ namespace tww {
 
         void restore(node_t n) {
             _deleted[n] = false;
+            available[n] = true;
+            ++available_num;
             for (auto cn=adjacency[n].find_first(); cn != adjacency[n].npos; cn = adjacency[n].find_next(cn)) {
                 adjacency[cn].set(n);
             }
@@ -73,6 +77,20 @@ namespace tww {
         void add_edge(node_t n1, node_t n2) {
             adjacency[n1].set(n2);
             adjacency[n2].set(n1);
+        }
+
+        inline void add_red_edge(node_t n1, node_t n2) {
+            assert(n1 != n2);
+//            assert(! red_adjacency[n1].test(n2));
+            red_adjacency[n1].set(n2);
+            red_adjacency[n2].set(n1);
+        }
+
+        inline void remove_red_edge(node_t n1, node_t n2) {
+            assert(n1 != n2);
+            assert(red_adjacency[n1].test(n2));
+            red_adjacency[n1].reset(n2);
+            red_adjacency[n2].reset(n1);
         }
 
         Graph copy(bool copy_red) const {
@@ -216,7 +234,7 @@ namespace tww {
                             is_header = true;
                             header_read = true;
                         }
-                        if (j == 0 && tok2 == "c") {
+                        if (j == 0 && (tok2 == "c" || tok2 == "")) {
                             break;
                         }
 
@@ -225,8 +243,14 @@ namespace tww {
                             exit(1);
                         }
 
-                        if (!is_header|| j > 1)
+                        if (tok2 == "e") {
+                            --j;
+                            continue;
+                        }
+
+                        if (!is_header || j > 1) {
                             nodes[j - (is_header ? 2 : 0)] = stoull(tok2);
+                        }
                     }
                     if (!is_header && j != 2 && j > 0) {
                         std::cout << "ERROR: found incomplete edge " << j << std::endl;
