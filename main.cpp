@@ -234,8 +234,14 @@ int main(int argc, char* argv[]) {
                 best_contractions.insert(best_contractions.end(), ub_result2.second.begin(), ub_result2.second.end());
             }
 
+            bool skip_d = false;
             node_t lb = overalllb;
-            if (use_lb) {
+            if(overalllb > ub){
+                lb = ub;
+                skip_d = true;
+            }
+            
+            if (use_lb && !skip_d) {
                 LowerBounds lbs(*g);
 
                 if (g->num_nodes() < 1000) {
